@@ -1,107 +1,94 @@
-import streamlit as st
-import numpy as np
-import pandas as pd
+import streamlit as st # フロントエンドを扱うstreamlitの機能をインポート
+import pandas as pd # データフレームを扱う機能をインポート
+import yfinance as yf # yahoo financeから株価情報を取得するための機能をインポート
+import altair as alt # チャート可視化機能をインポート
 
-st.title('Streamlit Hello World')
+#取得する銘柄の名前とキーを変換する一覧を設定
+#東証などのシンボルはhttps://support.yahoo-net.jp/PccFinance/s/article/H000006603で検索できる
+tickers = {
+    'NZAM': '2567.T',
+    'TOYOTA': '7203.T',
+    '武田薬品': '4502.T',
+    'セルソース': '4880.T',
+    'タカラバイオ': '4974.T',
+    '大紀アルミ': '5702.T',
+    '三菱商事': '8058.T',
+    '三井住友FG': '8316.T',
+    'ヤマトHD': '9064.T',
+    '日本郵船': '9101.T',
+    'J-POWER': '9513.T'
+}
 
-st.write('DataFrame') # テキストの表示
+st.title('株価可視化アプリ') # タイトル
 
-df = pd.DataFrame(
-    np.random.rand(20, 3),
-    columns=['a', 'b', 'c']
-)   # データフレームの作成
+st.sidebar.write("""
+こちらは株価可視化ツールです。以下のオプションから表示日数を指定できます。
+""") # サイドバーに表示
 
-st.line_chart(df) # 折れ線グラフの表示
-st.area_chart(df) # エリアグラフの表示
+st.sidebar.write("""
+## 表示日数選択
+""") # サイドバーに表示
 
-df = pd.DataFrame(
-    np.random.rand(100, 2)/[50, 50] + [35.69, 139.70],
-    columns=['lat', 'lon']
+days = st.sidebar.slider('日数', 1, 900, 20) # 取得するための日数をスライドバーで表示し、daysに代入
+
+st.write(f"過去 {days}日間 の株価") # 取得する日数を表示
+
+# @st.cacheで読み込みが早くなるように処理を保持しておける
+@st.cache_data
+def get_data(days, tickers):
+    df = pd.DataFrame() # 株価を代入するための空箱を用意
+
+    # 選択した株価の数だけ yf.Tickerでリクエストしてデータを取得する
+    for company in tickers.keys():
+        tkr = yf.Ticker(tickers[company]) # 設定した銘柄一覧でリクエストの為の7203.Tなどに変換をして、それをyf.Tickerで株価リクエスト
+        hist = tkr.history(period=f'{days}d') # スライドバーで指定した日数で取得した情報を絞る
+        hist.index = hist.index.strftime('%d %B %Y') # indexを日付のフォーマットに変更
+        hist = hist[['Close']] # データを終値だけ抽出
+        hist.columns = [company] # データのカラムをyf.Tickerのリクエストした企業名に設定
+        hist = hist.T # 欲しい情報が逆なので、転置する
+        hist.index.name = 'Name' # indexの名前をNameにする
+        df = pd.concat([df, hist]) # 用意した空のデータフレームに設定したhistのデータを結合する
+    return df # 返り値としてdfを返す
+
+# チャートに表示する範囲をスライドで表示し、それぞれをymin, ymaxに代入
+st.sidebar.write("株価の範囲指定")
+ymin, ymax = st.sidebar.slider(
+    '範囲を指定してください。',
+    0.0, 10000.0, (0.0, 10000.0)
 )
 
-st.map(df) # 地図の表示
+default_index = ['三菱商事', 'TOYOTA', 'セルソース'] # 最初に表示する企業名を設定
+df = get_data(days, tickers) # リクエストする企業一覧すべてと変換するtickersを引数に株価取得
 
-from PIL import Image
+# 取得したデータから抽出するための配列を生成し、companiesに代入
+companies = st.multiselect(
+    '会社名を選択してください。',
+    list(df.index),
+    default_index,
+)
 
-st.write('Display Image') #画像の表示
+if not companies:
+    st.error('少なくとも一社は選んでください。')
+else:
+    data = df.loc[companies] # 取得したデータから抽出するための配列で絞ってdataに代入
+    st.write("株価 (JPY)", data.sort_index()) # dataにあるindexを表示
+    data = data.T.reset_index() # dataを抽出して転置
 
-img = Image.open('../IMG_3621.jpg') # 画像の読み込み
-st.image(img, caption='sample', use_column_width=True) # 画像の表示
+    # 企業ごとの別々のカラムにデータを表示する必要ないので企業を１つのカラムに統一
+    data = pd.melt(data, id_vars=['Date']).rename(
+        columns={'value': 'Stock Prices(JPY)'}
+    )
 
-st.write('Interactive Widgets') # ウィジェットの表示
+    # dataとスライドバーで設定した最大最小値を元にalt.Chartを使って株価チャートを作成
+    chart = (
+        alt.Chart(data)
+        .mark_line(opacity=0.8, clip=True)
+        .encode(
+            x="Date:T",
+            y=alt.Y("Stock Prices(JPY):Q", stack=None, scale=alt.Scale(domain=[ymin, ymax])),
+            color='Name:N'
+        )
+    )
 
-text = st.text_input('あなたの趣味を教えてください。') # テキスト入力
-'あなたの趣味は', text, 'です。' # テキスト表示
-
-condition = st.slider('あなたの今の調子は？', 0, 100, 50) # スライダー
-'コンディション：', condition # テキスト表示
-
-# レイアウトとして２列を定義
-col1, col2 = st.columns(2)
-
-# 1列目をwithで囲む
-with col1:
-    st.write("列1がここに表示されます")
-
-# 2列目をwithで囲む
-with col2:
-    st.write("列2がここに表示されます")
-
-
-
-st.sidebar.write("hello world") #.sidebar付けるとサイトバーに出力されます。
-st.text_input("ここに文字が入力できます。") # テキストを入力できます。
-
-slider_text = st.slider("スライダーで数字を決定できます。",0,100,5) # (最小、最大値、デフォルト値)の順で設定されます。
-"スライダーの数字:",slider_text
-
-st.button("ボタン") # ボタンが設置されます。
-
-x = st.empty() # 文字が出力される場所をあらかじめ確保します。その場所をxとしています。
-bar = st.progress(0) # 進捗0のプログレスバーを出力します。
-
-import time
-
-# iに0から99まで代入しながら実行されます
-for i in range(100):
-    time.sleep(0.1) # 0.1秒待機します。
-    x.text(i) # 確保した場所xに代入されたiの値を代入します。
-    bar.progress(i) # 進捗iに変更します。
-    i += 1 # iに1足し算して代入します。
-
-# 選択肢を配列で指定して選択肢を出力します。
-st.selectbox("選んでください。",["選択肢1","選択肢2","選択肢3"])
-
-
-
-# ダウンロードする文字を定義し、output_textに代入します。
-output_text = "この文字がダウンロードされます"
-
- # 代入された文字をダウンロードするボタンを設置。オプションは内容をdataに指定、ファイル名をfile_nameに指定、ファイルタイプをmimeに指定
-st.download_button(label='記事内容 Download', 
-                   data=output_text, 
-                   file_name='out_put.txt',
-                   mime='text/plain',
-                   )
-
-
-# ファイルアップローダーを設置します。typeでアップロードできるファイルの種類を指定できます。
-file_upload = st.file_uploader("ここに音声認識したファイルをアップロードしてください。",type=["png","jpg"])
-
-# ファイルがアップロードされた時にその画像を表示します。
-if (file_upload !=None):
-    st.image(file_upload)# 画像を表示します。
-
-# 乱数の配列を作るメソッドを作ります。引数r,cとし、それぞれおのデフォルト値を10と5に設定します。
-def rand_df(r=10, c=5):
-    df = pd.DataFrame(
-        np.random.randn(r, c),
-        columns=('col %d' % i for i in range(c)))# 乱数10の５個の数列を作ります。カラムの設定は0-4の名前を付けます。
-    return df # 作ったデータフレームを返します。
-
-dataframe = rand_df(r=10,c=3) # rに10、cに3を代入したrand_dfメソッドを処理します。
-
-# 表の描画します。
-st.dataframe(dataframe.head(n=3))
-# データフレームのチャートの描画します。
-st.line_chart(dataframe)
+    # 作成したチャートをstreamlitで表示
+    st.altair_chart(chart, use_container_width=True)
